@@ -1,0 +1,8 @@
+This is a sphinx4 test set prepared by ewilded
+test_data/*wav along with  transcriptions have been downloaded from librivox.
+
+TODO
+- it would be nice to increase tests performance 4 times if the phoneme-length separated words were merged into one dictionary and one result set and just saved separately to draw professional precision recall graph, since currently tests for various phonemes ranges are run separately.
+- probably also the way of selecting words to spot (and their corresponding occurances in *result.txt files) implemented in generate_test_data.pl requires changing
+- it would be nice to change outOfGrammarProbability on the fly, instead of using bunch of hard-coded value perl script generated config files (this is how it's done at the moment)  < nshm1> you can add public method in linguist for that
+							I don't know how, where, don't have time for this, so I just made a bunch of hard-coded outOfGrammarProbability configs
