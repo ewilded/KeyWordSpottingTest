@@ -22,26 +22,52 @@ public class KeyWordSpottingTest
 			private static Map<String,ArrayList<String>> precisionRecallGraph = new HashMap<String, ArrayList<String>>(); // phonemes count, accuracy, false alarms
 			private static Map<String, ArrayList<String>> wordsToSpot = new HashMap<String, ArrayList<String>>();
 			private static String[] phonemesRange={"4-7","8-11","12-15","16-20"};
-			private static String[] outOfGrammarProbability={"9E-1","5E-1","1E-1","1E-3", "1E-5", "1E-7" ,"1E-9", "1E-11", "1E-15", "1E-20","1E-30", "1E-50", "1E-100","1E-130","1E-150","1E-170","1E-200"};  // it would be nice to keep them in a separate file too, instead of hard-coding, I'll move it when it starts working 
+			private static String[] outOfGrammarProbability={"9E-1","5E-1","1E-1","1E-3", "1E-5", "1E-7" ,"1E-9", "1E-11", "1E-15", "1E-20","1E-30", "1E-50", "1E-100","1E-130","1E-150","1E-170","1E-200"};  // it would be nice to keep them in a separate file too, instead of hard-coding, I'll move it when it starts working
+			private static String cfPath;
+			private static ConfigurationManager cm;
+			private static Recognizer recognizer;
+ 			private static AudioFileDataSource dataSource;
+			
+			// separate counters for each of phonemes ranges
+			
+			private static int[] testsCount = new int[phonemesRange.length];
+			private static int[] localExpectedWordsCount = new int[phonemesRange.length];
+			private static int[] noFillerResultsCount = new int[phonemesRange.length];
+			private static double[] accuracy= new double[phonemesRange.length];
+			//private static int[] correctHits = new int[phonemesRange.length];
+			private static int[] localCorrectHits = new int[phonemesRange.length];		
+			private static int[] falseAlarmsCount = new int[phonemesRange.length];			
+			private static int[] localFalseAlarmsCount = new int[phonemesRange.length];			
+			private static double[] durationSecs = new double[phonemesRange.length]; // summary duration in milliseconds
+			
+			private static int fileSize;
+			private static NoSkipGrammar grammar;
+			
 			private static void initDictionaries()
 			{
 					for(int i=0;i<phonemesRange.length;i++)
 					{ 
+							File oldResult=new File("precision_recall_graph."+phonemesRange[i]+".dat");
+							oldResult.delete();
 							String searchDictionaryPath="test_data/words_to_spot."+phonemesRange[i]+".txt";
-							try
+							File toSpotFile=new File(searchDictionaryPath);
+							if(toSpotFile.isFile())
 							{
-								FileInputStream fstream = new FileInputStream(searchDictionaryPath);
-								DataInputStream in = new DataInputStream(fstream);
-								BufferedReader br = new BufferedReader(new InputStreamReader(in));
-								String anotherKWord;
-								List<String> wordMap=new ArrayList<String>();
-								while ((anotherKWord = br.readLine()) != null) wordMap.add(anotherKWord);
-								wordsToSpot.put(phonemesRange[i],(ArrayList)wordMap);
-								in.close();
-							}
-							catch (Exception e)
-							{       
-								System.err.println("Exception Error: " + e.getMessage());
+								try
+								{
+									FileInputStream fstream = new FileInputStream(searchDictionaryPath);
+									DataInputStream in = new DataInputStream(fstream);
+									BufferedReader br = new BufferedReader(new InputStreamReader(in));
+									String anotherKWord;
+									List<String> wordMap=new ArrayList<String>();
+									while ((anotherKWord = br.readLine()) != null) wordMap.add(anotherKWord);
+									wordsToSpot.put(phonemesRange[i],(ArrayList)wordMap);
+									in.close();
+								}
+								catch (Exception e)
+								{       
+									System.err.println("Exception Error: " + e.getMessage());
+								}
 							}                
 					}
 			}
@@ -77,7 +103,7 @@ public class KeyWordSpottingTest
 			{
 					for(int j=0;j<outOfGrammarProbability.length;j++)
 					{   
-							System.out.println("Starting tests with outOfGrammarProbability: "+outOfGrammarProbability[j]+"("+Integer.toString(j+1)+" of "+Integer.toString(outOfGrammarProbability.length)+")");
+							System.out.println("\n\nStarting tests with outOfGrammarProbability: "+outOfGrammarProbability[j]+"("+Integer.toString(j+1)+" of "+Integer.toString(outOfGrammarProbability.length)+")");
 							/*
 							This has been commented out since it doesn't work anyway:
 							cm.setGlobalProperty("outOfGrammarProbability",outOfGrammarProbability[j]); // dynamically set current outOfGrammarProbability, other settings are left as they were set directly in the configuration file
@@ -85,112 +111,156 @@ public class KeyWordSpottingTest
 							Solution:
 							13:53 < nshm1> you can add public method in linguist for that
 							I don't know how, where, don't have time for this, so I just made a bunch of hard-coded outOfGrammarProbability configs
-							*/
-							String cfPath="./src/config_"+outOfGrammarProbability[j]+".xml";
-							ConfigurationManager cm = new ConfigurationManager(cfPath); // original config
-							Recognizer recognizer = (Recognizer) cm.lookup("recognizer");
-							List<String> ar = new ArrayList<String>();
+							*/             
+							cfPath="./src/config_"+outOfGrammarProbability[j]+".xml";
+							cm = new ConfigurationManager(cfPath); 
+							recognizer = (Recognizer) cm.lookup("recognizer");
+							grammar = (NoSkipGrammar) cm.lookup("NoSkipGrammar"); // reinitialize grammar, since each phonemesRange has its own list of words to spot (to make these tests reliable, number of words to spot should be the same for all phonemes lengths)
 							for(int k=0;k<phonemesRange.length;k++)
 							{
-								NoSkipGrammar grammar = (NoSkipGrammar) cm.lookup("NoSkipGrammar"); // reinitialize grammar, since each phonemesRange has its own list of words to spot (to make these tests reliable, number of words to spot should be the same for all phonemes lengths)
-								for(int o=0;o<wordsToSpot.get(phonemesRange[k]).size();o++) grammar.addKeyword(wordsToSpot.get(phonemesRange[k]).get(o));
-								int testsCount=0;
-        						int correctHits=0;
-								int falseAlarmsCount=0;
-								int durationSecs=0; // summary duration in miliseconds
-								double accuracy=0d;
-								for(int n=0;n<audioFiles.size();n++)
-								{									   	
+											testsCount[k]=0;
+	     									//correctHits[k]=0;
+											falseAlarmsCount[k]=0;
+											accuracy[k]=0d;
+											durationSecs[k]=0;
+											if(wordsToSpot.containsKey(phonemesRange[k]))
+											for(int o=0;o<wordsToSpot.get(phonemesRange[k]).size();o++) 
+											{
+												grammar.addKeyword(wordsToSpot.get(phonemesRange[k]).get(o));
+											}											
+							}	
+							for(int n=0;n<audioFiles.size();n++)
+							{
+									System.out.println("\n\nKWS for "+audioFiles.get(n)+".wav");
+									dataSource = (AudioFileDataSource) cm.lookup("audioFileDataSource");
+									List<String> currExpectedResult=new ArrayList();
+									fileSize=0;     
+									try
+									{ 
+										dataSource.setAudioFile(new URL("file:"+audioFiles.get(n)+".wav"), null);
+										fileSize=(int)new File(audioFiles.get(n)+".wav").length();
+									}
+									catch (Exception e)
+									{       
+											System.err.println("Exception Error: " + e.getMessage());
+									}   	   
+									
+									// this for should be moved to separate method (we'll do this after testing the code)
+									for(int k=0;k<phonemesRange.length;k++)
+									{								
+	     									localCorrectHits[k]=0;
+											localFalseAlarmsCount[k]=0;
+											noFillerResultsCount[k]=0;			
 											String currPath=audioFiles.get(n)+"."+phonemesRange[k]+".result.txt";
-											System.out.println("Working on "+currPath);
-											File resultFile=new File(currPath);
-											if(!resultFile.isFile()) continue; // not all audio files must have results for all phonemes ranges, they must have at least one
-											testsCount++;
-											int localFalseAlarmsCount=0;
-											int expectedWordsCount=0;
-											int localCorrectHits=0;
-											int noFillerResultsCount=0;
-											double localAccuracy=0d;
-											int fileSize=0;
-											List<String> currExpectedResult=new ArrayList();                   
+											File resultFile=new File(currPath);											
+											if(!resultFile.isFile()) continue; // not all audio files must have results for all phonemes ranges, they must have at least one       
+											localExpectedWordsCount[k]=0;
 											try
 											{                 						
 												FileInputStream fstream3 = new FileInputStream(currPath);
 												DataInputStream in3 = new DataInputStream(fstream3);
 												BufferedReader br3 = new BufferedReader(new InputStreamReader(in3));		
 												String anotherResult;
-												while ((anotherResult = br3.readLine()) != null) currExpectedResult.add(anotherResult.toLowerCase());
+												while ((anotherResult = br3.readLine()) != null) 
+												{
+														currExpectedResult.add(anotherResult.toLowerCase());
+														localExpectedWordsCount[k]++;
+												}
 												in3.close();
 											}
 											catch (Exception e)
 											{       
 													System.err.println("Exception Error: " + e.getMessage());
-											}     
-											expectedWordsCount=currExpectedResult.size();
-											if(expectedWordsCount==0)
-											{
-													System.out.println("WARNING: "+currPath+" seems empty, skipping this one.");
-													continue;
 											}
-											AudioFileDataSource dataSource = (AudioFileDataSource) cm.lookup("audioFileDataSource");
-											System.out.println("KWS for "+audioFiles.get(n)+".wav, "+phonemesRange[k]+" phonemes.");
-											try
-											{ 
-													dataSource.setAudioFile(new URL("file:"+audioFiles.get(n)+".wav"), null);
-													fileSize=(int)new File(audioFiles.get(n)+".wav").length();
-											}
-											catch (Exception e)
-											{       
-													System.err.println("Exception Error: " + e.getMessage());
-											}   	            					 
-											durationSecs+=(int)(fileSize/(32*1024)); // 32kilobytes = 1 second
-											recognizer.allocate(); 
-											Result result = recognizer.recognize();
-											String resString=result.getTimedBestResult(false, true);
-											
-											System.out.println("[DEBUG] "+resString);
-											//result.getResultTokens(); does not actually return result tokens, therefore I have to split it, just like I did with my perl version of this program
-											List<String> resultTokens= new ArrayList<String>();
-											String[] r=resString.split(" ");
-											for(int p=0;p<r.length;p++) resultTokens.add(r[p]);
-											Pattern wordSpotted = Pattern.compile("(\\w+)\\(\\d+\\.\\d+,\\d+\\.\\d+\\)"); //	  family(43.72,44.21)
-											System.out.println("Expected words count: "+Integer.toString(currExpectedResult.size()));
-											for (int l=0;l<resultTokens.size();l++)
+											if(localExpectedWordsCount[k]==0)
 											{
+														System.out.println("WARNING: "+currPath+" seems empty, skipping this one.");
+														continue;
+											}
+											System.out.println("localExpectedWordsCount for phonemesRange["+phonemesRange[k]+"]: "+Integer.toString(localExpectedWordsCount[k]));
+											testsCount[k]++;
+											durationSecs[k]+=(int)(fileSize/(32*1024)); // 32kilobytes = 1 second (calculate summary duration separately for each phonemes range)
+      							}
+									AudioFileDataSource dataSource = (AudioFileDataSource) cm.lookup("audioFileDataSource");
+
+
+									recognizer.allocate(); 
+									Result result = recognizer.recognize();
+									String resString=result.getTimedBestResult(false, true);
+									System.out.println("[DEBUG] "+resString);
+									List<String> resultTokens= new ArrayList<String>();
+									String[] r=resString.split(" ");
+									for(int p=0;p<r.length;p++) resultTokens.add(r[p]);
+									Pattern wordSpotted = Pattern.compile("(\\w+)\\(\\d+\\.\\d+,\\d+\\.\\d+\\)"); //	  family(43.72,44.21)
+									System.out.println("Expected overall words count: "+Integer.toString(currExpectedResult.size()));
+									for (int l=0;l<resultTokens.size();l++)
+									{
 													String currWord=resultTokens.get(l);
 													Matcher ma = wordSpotted.matcher(currWord);
-        											if (!ma.matches()) continue; 
+        											if (!ma.matches()) continue;
         											currWord=ma.group(1);
 													// System.out.println("verifying result: "+currWord);
-													noFillerResultsCount++;
-													for(int m=0;m<currExpectedResult.size();m++)
-													{
-															if(currWord.equals(currExpectedResult.get(m)))
+													//System.out.println("good hit: "+currWord);
+													int phHitK=0; // find appropriate phonemes range
+													for(phHitK=0;phHitK<phonemesRange.length;phHitK++)
+													{																			
+															if(wordsToSpot.get(phonemesRange[phHitK]).contains(currWord)) 
 															{
-																	System.out.println("good hit: "+currWord);
-																	localCorrectHits++;
-																	correctHits++;
-																	currExpectedResult.remove(m); // remove the match from the list, so we know how many are left (no timing compared, so there can occur some minor inaccuracies, like negative + false positive of the same word in other section would be treated as a good hit, be aware of this fact)
+																	noFillerResultsCount[phHitK]++; // known phonemes range word hit, now let's find out if it's correct 
+																	// hit
+																	for(int m=0;m<currExpectedResult.size();m++)
+																	{
+																		if(currWord.equals(currExpectedResult.get(m)))
+																		{																
+																				localCorrectHits[phHitK]++;
+																				//correctHits[phHitK]++;
+																				currExpectedResult.remove(m); // remove the match from the list, so we know how many are left (no timing compared, so there can occur some minor inaccuracies, like negative + false positive of the same word in other section would be treated as a good hit, be aware of this fact)																				
+																				break;
+																		}
+																	}	
 																	break;
 															}
 													}
+									}
+									recognizer.deallocate();									
+									
+									for(int k=0;k<phonemesRange.length;k++)
+									{
+											System.out.println("Collecting local result for "+phonemesRange[k]);
+											if(localExpectedWordsCount[k]==0)
+											{
+												 System.out.println("No expected results for this file for "+phonemesRange[k]+", skipping.");
+												 continue; // no tests for this range on current audio file, skip results calculation
 											}
-											recognizer.deallocate();
-											localAccuracy=localCorrectHits/expectedWordsCount;
-											accuracy+=localAccuracy;
-											localFalseAlarmsCount=noFillerResultsCount-localCorrectHits; // the number of results that did not match to expected list
-											if(localFalseAlarmsCount<0) localFalseAlarmsCount=0;
-											falseAlarmsCount+=localFalseAlarmsCount;
-											System.out.println("Matched "+Integer.toString(localCorrectHits)+" of "+Integer.toString(expectedWordsCount)+", false alarms met: "+Integer.toString(localFalseAlarmsCount)+".");
-									} // end of foreach over all wav files
-									System.out.println("[DEBUG] overall duration in seconds: "+Integer.toString(durationSecs));
-									if(testsCount>0) accuracy/=testsCount;
-									double durationHours=(double)durationSecs/(double)3600.0;
-									ar.add(phonemesRange[k]);
-									ar.add(Double.toString(accuracy));
-									ar.add(Double.toString(falseAlarmsCount/durationHours));
-								} // end of foreach over phonemes ranges
-								precisionRecallGraph.put(outOfGrammarProbability[j],(ArrayList)ar);	
+											System.out.println("Overall spotted results count: "+Integer.toString(noFillerResultsCount[k])+", localCorrectHits: "+Integer.toString(localCorrectHits[k]));
+											double localAcc=(double)localCorrectHits[k]/localExpectedWordsCount[k];
+											System.out.println("local accuracy ("+phonemesRange[k]+") "+Double.toString(localAcc));
+											accuracy[k]+=localAcc;
+											localFalseAlarmsCount[k]=noFillerResultsCount[k]-localCorrectHits[k]; // the number of results that did not match to expected list
+											if(localFalseAlarmsCount[k]<0) localFalseAlarmsCount[k]=0;
+											falseAlarmsCount[k]+=localFalseAlarmsCount[k];
+											System.out.println("False alarms count ("+phonemesRange[k]+"): "+Double.toString(localFalseAlarmsCount[k]));		
+									}			
+						} // end of foreach over all wav files
+						List<String> ar = new ArrayList<String>();
+						for(int k=0;k<phonemesRange.length;k++)
+						{								
+								ar.add(phonemesRange[k]);
+								if(testsCount[k]>0)
+								{
+										System.out.println("Tests count for "+phonemesRange[k]+" for OOGP:"+outOfGrammarProbability[j]+" = "+Integer.toString(testsCount[k]));
+										accuracy[k]/=(double)testsCount[k];
+										ar.add(Double.toString(accuracy[k]));
+										double durationHours=(double)durationSecs[k]/(double)3600.0;
+										ar.add(Double.toString(falseAlarmsCount[k]/durationHours));			
+								}
+								else
+								{
+										ar.add("NaN");
+										ar.add("NaN");
+								}
+						}
+						precisionRecallGraph.put(outOfGrammarProbability[j],(ArrayList)ar);
 				} // end of foreach over outOfGrammarProbability values
 				System.out.println("Test set has finished.");
 			}
@@ -210,7 +280,9 @@ public class KeyWordSpottingTest
 							FileWriter fstream4 = new FileWriter(fname,true);
 							BufferedWriter out4= new BufferedWriter(fstream4);
 							System.out.println(outOfGrammarProbability[j]+"\t"+precisionRecallGraph.get(outOfGrammarProbability[j]).get(i+1).toString()+"\t"+precisionRecallGraph.get(outOfGrammarProbability[j]).get(i+2).toString());
+							
 							out4.write(outOfGrammarProbability[j]+"\t"+precisionRecallGraph.get(outOfGrammarProbability[j]).get(i+1).toString()+"\t"+precisionRecallGraph.get(outOfGrammarProbability[j]).get(i+2).toString()+"\n"); // outOfGrammarProbability,accuracy, falseAlarms
+							
 							out4.close();
 							System.out.println("OK.");
 						}
